@@ -45,10 +45,9 @@ impl LimiterKeyDeriver {
     /// Returns an error if the operating system's randomness source cannot
     /// be read. Fails closed rather than falling back to a predictable
     /// secret.
-    pub fn new() -> Result<Self, crate::error::ApiError> {
+    pub fn new() -> Result<Self, getrandom::Error> {
         let mut secret = [0u8; SECRET_BYTES];
-        getrandom::fill(&mut secret)
-            .map_err(|e| crate::error::ApiError::Internal(e.to_string()))?;
+        getrandom::fill(&mut secret)?;
         Ok(Self { secret })
     }
 

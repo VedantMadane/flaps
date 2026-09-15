@@ -188,7 +188,7 @@ impl<S: Store> AppState<S> {
     /// Returns an error if the operating system's randomness source cannot
     /// be read while building a rate limiter. Fails closed rather than
     /// falling back to a predictable secret.
-    pub fn new(store: S) -> Result<Self, crate::error::ApiError> {
+    pub fn new(store: S) -> Result<Self, getrandom::Error> {
         let (events, _) = broadcast::channel(EVENTS_CHANNEL_CAPACITY);
         Ok(Self {
             store,
@@ -241,7 +241,7 @@ impl<S: Store> AppState<S> {
         rate_limiter: Arc<RateLimiter>,
         login_rate_limiter: Arc<RateLimiter>,
         session_ttl: Duration,
-    ) -> Result<Self, crate::error::ApiError> {
+    ) -> Result<Self, getrandom::Error> {
         let (events, _) = broadcast::channel(EVENTS_CHANNEL_CAPACITY);
         Ok(Self {
             store,

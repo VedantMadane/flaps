@@ -75,7 +75,7 @@ impl RateLimiter {
     /// Returns an error if the operating system's randomness source cannot
     /// be read while deriving the limiter key secret. Fails closed rather
     /// than falling back to a predictable secret.
-    pub fn new(config: RateLimitConfig) -> Result<Self, crate::error::ApiError> {
+    pub fn new(config: RateLimitConfig) -> Result<Self, getrandom::Error> {
         Ok(Self {
             enabled: config.enabled,
             capacity: f64::from(config.capacity),
@@ -91,7 +91,7 @@ impl RateLimiter {
     ///
     /// # Errors
     /// See [`Self::new`].
-    pub fn disabled() -> Result<Self, crate::error::ApiError> {
+    pub fn disabled() -> Result<Self, getrandom::Error> {
         Self::new(RateLimitConfig {
             enabled: false,
             capacity: u32::MAX,

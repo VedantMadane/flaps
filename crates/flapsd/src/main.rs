@@ -126,7 +126,6 @@ fn build_app_state<S: Store>(store: S, config: &Config) -> Result<AppState<S>> {
             capacity: rate_limit_per_minute,
             refill_per_second: f64::from(rate_limit_per_minute) / 60.0,
         })
-        .map_err(|e| anyhow::anyhow!("{e:?}"))
         .context("building the SDK rate limiter")?,
     );
     let login_rate_limiter = Arc::new(
@@ -135,7 +134,6 @@ fn build_app_state<S: Store>(store: S, config: &Config) -> Result<AppState<S>> {
             capacity: flaps_server::state::DEFAULT_LOGIN_RATE_LIMIT_CAPACITY,
             refill_per_second: flaps_server::state::DEFAULT_LOGIN_RATE_LIMIT_REFILL_PER_SECOND,
         })
-        .map_err(|e| anyhow::anyhow!("{e:?}"))
         .context("building the login rate limiter")?,
     );
     let sse_quota = Arc::new(SseQuota::new(SseQuotaConfig {
@@ -149,7 +147,6 @@ fn build_app_state<S: Store>(store: S, config: &Config) -> Result<AppState<S>> {
         login_rate_limiter,
         config.effective_session_ttl(),
     )
-    .map_err(|e| anyhow::anyhow!("{e:?}"))
     .context("building application state")?
     .with_sse_quota(sse_quota);
 

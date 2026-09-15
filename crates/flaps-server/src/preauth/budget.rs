@@ -83,7 +83,7 @@ impl PreAuthBudget {
     /// Returns an error if the operating system's randomness source cannot
     /// be read while building either layer. Fails closed rather than
     /// falling back to a predictable secret.
-    pub fn new(config: PreAuthBudgetConfig) -> Result<Self, crate::error::ApiError> {
+    pub fn new(config: PreAuthBudgetConfig) -> Result<Self, getrandom::Error> {
         Ok(Self {
             global: RateLimiter::new(config.global)?,
             per_client: RateLimiter::new(config.per_client)?,
