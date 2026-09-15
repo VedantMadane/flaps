@@ -1712,8 +1712,23 @@ impl WriteSession for SqliteWriteSession<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::SqliteStore;
+    use super::{SqliteStore, verify_password};
     use crate::hash::KeyHasher;
+
+    /// Password and PHC hash fixed by the argon2-0-6 migration compatibility
+    /// vector. Produced by argon2 0.5.3 (`Argon2::default().hash_password`)
+    /// and independently recomputed by argon2-cffi 25.1.0 (reference C
+    /// implementation). Never recompute this literal from code under test:
+    /// it exists to detect a migration that silently stops accepting hashes
+    /// written by the version currently in production.
+    const COMPAT_PASSWORD: &str = "correct horse battery staple";
+    const COMPAT_HASH: &str =
+        "$argon2id$v=19$m=19456,t=2,p=1$ZW5jZWxhZGUtY29tcGF0IQ$PvqN4pZjkPyMJhq1JTRQTKBOhG987wgCXlUwiujDZQ0";
+
+    #[test]
+    fn verifies_hash_stored_by_previous_argon2_release() {
+        assert!(verify_password(COMPAT_PASSWORD, COMPAT_HASH));
+    }
 
     /// Issue #98 regression: `SqliteStore::connect` must create the database
     /// file when it does not exist yet, matching a fresh Docker volume or a
