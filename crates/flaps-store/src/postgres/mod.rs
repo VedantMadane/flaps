@@ -1672,7 +1672,7 @@ impl WriteSession for PostgresWriteSession<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::verify_password;
+    use super::{hash_password, verify_password};
 
     /// Password and PHC hash fixed by the argon2-0-6 migration compatibility
     /// vector. Produced by argon2 0.5.3 (`Argon2::default().hash_password`)
@@ -1687,5 +1687,31 @@ mod tests {
     #[test]
     fn verifies_hash_stored_by_previous_argon2_release() {
         assert!(verify_password(COMPAT_PASSWORD, COMPAT_HASH));
+    }
+
+    #[test]
+    fn rejects_wrong_password_against_stored_hash() {
+        assert!(!verify_password(
+            "correct horse battery stapl",
+            COMPAT_HASH
+        ));
+    }
+
+    #[test]
+    fn new_hash_uses_argon2id_default_parameters() {
+        let hash = hash_password(COMPAT_PASSWORD).expect("hashing must succeed");
+        assert!(hash.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"));
+    }
+
+    #[test]
+    fn two_hashes_of_same_password_differ() {
+        let first = hash_password(COMPAT_PASSWORD).expect("hashing must succeed");
+        let second = hash_password(COMPAT_PASSWORD).expect("hashing must succeed");
+        assert_ne!(first, second, "salt must be drawn fresh for every hash");
+    }
+
+    #[test]
+    fn rejects_malformed_hash() {
+        assert!(!verify_password(COMPAT_PASSWORD, "not-a-phc-string"));
     }
 }
