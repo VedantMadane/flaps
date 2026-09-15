@@ -62,7 +62,7 @@ async fn make_authed_app<S: Store>(store: S) -> (axum::Router, AppState<S>, Stri
     bootstrap_admin(&store, ADMIN_USER, ADMIN_PASS)
         .await
         .expect("bootstrap admin");
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
     let app = build_router(state.clone());
 
     let login_body = serde_json::json!({

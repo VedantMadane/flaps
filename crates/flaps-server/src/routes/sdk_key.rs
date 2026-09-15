@@ -1,6 +1,5 @@
 //! Admin handlers for SDK key management within a project/environment scope.
 
-use argon2::password_hash::rand_core::{OsRng, RngCore};
 use axum::{
     Json,
     extract::{Path, State},
@@ -67,7 +66,7 @@ pub async fn post_sdk_key<S: Store>(
         .ok_or(ApiError::NotFound)?;
 
     // Generate a raw key: prefix (kind letter) + 24 random bytes as hex.
-    let raw_key = generate_sdk_key(body.kind);
+    let raw_key = generate_sdk_key(body.kind).map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let new_key = NewSdkKey {
         kind: body.kind,
@@ -150,17 +149,61 @@ pub async fn delete_sdk_key<S: Store>(
 }
 
 /// Generates a raw SDK key with a kind-specific prefix string.
-fn generate_sdk_key(kind: SdkKeyKind) -> String {
+///
+/// # Errors
+/// Returns an error if the operating system's randomness source cannot be
+/// read. Fails closed rather than falling back to a predictable key.
+fn generate_sdk_key(kind: SdkKeyKind) -> Result<String, getrandom::Error> {
     let prefix = match kind {
         SdkKeyKind::Server => "sv",
         SdkKeyKind::Client => "cl",
     };
     let mut bytes = [0u8; 24];
-    OsRng.fill_bytes(&mut bytes);
+    getrandom::fill(&mut bytes)?;
     let hex: String = bytes.iter().fold(String::with_capacity(48), |mut acc, b| {
         use std::fmt::Write as _;
         let _ = write!(acc, "{b:02x}");
         acc
     });
-    format!("{prefix}_{hex}")
+    Ok(format!("{prefix}_{hex}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_sdk_key;
+    use flaps_domain::SdkKeyKind;
+
+    #[test]
+    fn generated_server_key_has_expected_prefix_and_length() {
+        let key = generate_sdk_key(SdkKeyKind::Server).expect("test RNG must be available");
+        assert!(key.starts_with("sv_"), "got {key}");
+        // "sv_" (3) + 24 bytes as hex (48) = 51 characters.
+        assert_eq!(key.len(), 51, "unexpected key length: {key}");
+    }
+
+    #[test]
+    fn generated_client_key_has_expected_prefix_and_length() {
+        let key = generate_sdk_key(SdkKeyKind::Client).expect("test RNG must be available");
+        assert!(key.starts_with("cl_"), "got {key}");
+        assert_eq!(key.len(), 51, "unexpected key length: {key}");
+    }
+
+    #[test]
+    fn generated_key_suffix_is_lowercase_hex() {
+        let key = generate_sdk_key(SdkKeyKind::Server).expect("test RNG must be available");
+        let suffix = key.strip_prefix("sv_").expect("server prefix");
+        assert!(
+            suffix
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "suffix must be lowercase hex; got {suffix}"
+        );
+    }
+
+    #[test]
+    fn two_generated_keys_differ() {
+        let first = generate_sdk_key(SdkKeyKind::Server).expect("test RNG must be available");
+        let second = generate_sdk_key(SdkKeyKind::Server).expect("test RNG must be available");
+        assert_ne!(first, second, "salt must be drawn fresh for every key");
+    }
 }

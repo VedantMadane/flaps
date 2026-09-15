@@ -517,7 +517,7 @@ mod tests {
             .await
             .unwrap();
 
-        let state = AppState::new(store);
+        let state = AppState::new(store).expect("test RNG must be available");
         let project = ProjectKey::new("proj").unwrap();
         let environment = EnvironmentKey::new("prod").unwrap();
 
@@ -591,7 +591,7 @@ mod tests {
             .await
             .unwrap();
 
-        let state = AppState::new(store);
+        let state = AppState::new(store).expect("test RNG must be available");
 
         // recompile_environment must fail because "ghost-segment" is absent.
         let result = recompile_environment(&state, &project, &env_key).await;
@@ -660,7 +660,7 @@ mod tests {
             .await
             .unwrap();
 
-        let state = AppState::new(store);
+        let state = AppState::new(store).expect("test RNG must be available");
 
         // Seed a deliberately stale cache entry for env_a: a lower version
         // and a document that does not match current store content.
@@ -765,7 +765,7 @@ mod tests {
             .await
             .unwrap();
 
-        let state = AppState::new(store);
+        let state = AppState::new(store).expect("test RNG must be available");
 
         // `broken_env` is listed FIRST, so a naive `?`-propagating loop would
         // never reach `healthy_env` at all.

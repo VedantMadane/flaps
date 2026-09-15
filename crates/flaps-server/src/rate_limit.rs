@@ -70,22 +70,28 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     /// Builds a rate limiter from the given configuration.
-    #[must_use]
-    pub fn new(config: RateLimitConfig) -> Self {
-        Self {
+    ///
+    /// # Errors
+    /// Returns an error if the operating system's randomness source cannot
+    /// be read while deriving the limiter key secret. Fails closed rather
+    /// than falling back to a predictable secret.
+    pub fn new(config: RateLimitConfig) -> Result<Self, getrandom::Error> {
+        Ok(Self {
             enabled: config.enabled,
             capacity: f64::from(config.capacity),
             refill_per_second: config.refill_per_second,
             max_buckets: MAX_BUCKETS,
-            deriver: LimiterKeyDeriver::new(),
+            deriver: LimiterKeyDeriver::new()?,
             buckets: Mutex::new(HashMap::new()),
             swept_bucket_scans: AtomicU64::new(0),
-        }
+        })
     }
 
     /// Builds a disabled rate limiter. [`Self::check`] always returns `Ok(())`.
-    #[must_use]
-    pub fn disabled() -> Self {
+    ///
+    /// # Errors
+    /// See [`Self::new`].
+    pub fn disabled() -> Result<Self, getrandom::Error> {
         Self::new(RateLimitConfig {
             enabled: false,
             capacity: u32::MAX,
@@ -98,9 +104,10 @@ impl RateLimiter {
     #[cfg(test)]
     #[must_use]
     pub fn with_max_buckets(config: RateLimitConfig, max_buckets: usize) -> Self {
+        let base = Self::new(config).expect("test RNG must be available");
         Self {
             max_buckets,
-            ..Self::new(config)
+            ..base
         }
     }
 
@@ -457,7 +464,7 @@ mod tests {
 
     #[test]
     fn bucket_memory_does_not_grow_with_key_length() {
-        let limiter = RateLimiter::new(config(10, 1.0));
+        let limiter = RateLimiter::new(config(10, 1.0)).expect("test RNG must be available");
         let long_key = "k".repeat(64 * 1024);
 
         assert!(limiter.check(&long_key).is_ok());

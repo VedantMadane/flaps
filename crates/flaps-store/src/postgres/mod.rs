@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
+use argon2::{Argon2, PasswordHasher, PasswordVerifier, password_hash::phc::PasswordHash};
 use sqlx::{
     Executor, Pool, Postgres, Transaction,
     migrate::{Migration, MigrationType, Migrator},
@@ -39,17 +39,10 @@ use crate::{
 // ---------------------------------------------------------------------------
 
 fn hash_password(password: &str) -> StoreResult<String> {
-    let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
-    let argon2 = Argon2::default();
-    argon2
-        .hash_password(password.as_bytes(), &salt)
+    Argon2::default()
+        .hash_password(password.as_bytes())
         .map(|h| h.to_string())
-        .map_err(|e| {
-            StoreError::Serialization(
-                serde_json::from_str::<serde_json::Value>(&format!("\"argon2 error: {e}\""))
-                    .unwrap_err(),
-            )
-        })
+        .map_err(|e| crate::error::crypto_error("hashing password", e))
 }
 
 fn verify_password(password: &str, hash: &str) -> bool {
@@ -88,17 +81,21 @@ async fn verify_password_off_runtime(password: &str, hash: &str) -> bool {
 /// time. Branch prediction, CPU caches, and allocator behavior can still leak
 /// a smaller signal. It is not a hard timing guarantee.
 static DUMMY_PASSWORD_HASH: LazyLock<String> =
-    LazyLock::new(|| hash_password(&generate_token()).unwrap_or_default());
+    LazyLock::new(|| hash_password(&generate_token().unwrap_or_default()).unwrap_or_default());
 
-fn generate_token() -> String {
-    use argon2::password_hash::rand_core::RngCore;
+/// Generates a 32-byte URL-safe random token encoded as hex (64 chars).
+///
+/// # Errors
+/// Returns an error if the operating system's randomness source cannot be
+/// read. Fails closed rather than falling back to a predictable token.
+fn generate_token() -> StoreResult<String> {
     let mut bytes = [0u8; 32];
-    argon2::password_hash::rand_core::OsRng.fill_bytes(&mut bytes);
-    bytes.iter().fold(String::with_capacity(64), |mut acc, b| {
+    getrandom::fill(&mut bytes).map_err(|e| crate::error::crypto_error("generating token", e))?;
+    Ok(bytes.iter().fold(String::with_capacity(64), |mut acc, b| {
         use std::fmt::Write as _;
         let _ = write!(acc, "{b:02x}");
         acc
-    })
+    }))
 }
 
 fn secs_to_rfc3339(secs: u64) -> String {
@@ -142,17 +139,14 @@ fn managed_by_from_str(s: &str) -> StoreResult<ManagedBy> {
     match s {
         "local" => Ok(ManagedBy::Local),
         "federated" => Ok(ManagedBy::Federated),
-        other => Err(StoreError::Serialization(
-            serde_json::from_str::<serde_json::Value>(&format!("\"unknown managed_by: {other}\""))
-                .unwrap_err(),
-        )),
+        other => Err(StoreError::CorruptRecord(format!(
+            "unknown managed_by: {other}"
+        ))),
     }
 }
 
 fn domain_key_err(e: &flaps_domain::DomainError) -> StoreError {
-    StoreError::Serialization(
-        serde_json::from_str::<serde_json::Value>(&format!("\"{e}\"")).unwrap_err(),
-    )
+    StoreError::CorruptRecord(e.to_string())
 }
 
 fn row_to_project(
@@ -1337,7 +1331,7 @@ impl AccountRepository for PostgresStore {
 
 impl SessionRepository for PostgresStore {
     async fn create_session(&self, account_id: &str, ttl: Duration) -> StoreResult<NewSession> {
-        let raw_token = generate_token();
+        let raw_token = generate_token()?;
         let token_hash = self.hasher.hash(&raw_token);
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1658,5 +1652,78 @@ impl WriteSession for PostgresWriteSession<'_> {
     async fn commit(self) -> StoreResult<()> {
         self.tx.commit().await?;
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+//
+// hash_password/verify_password are pure argon2 wrappers with no database
+// access (identical implementation to the sqlite backend, mirrored on
+// purpose): they are exercised here directly, with no live PostgreSQL
+// instance required.
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        domain_key_err, generate_token, hash_password, managed_by_from_str, verify_password,
+    };
+    use crate::error::StoreError;
+
+    /// Password and PHC hash fixed by the argon2-0-6 migration compatibility
+    /// vector. Produced by argon2 0.5.3 (`Argon2::default().hash_password`)
+    /// and independently recomputed by argon2-cffi 25.1.0 (reference C
+    /// implementation). Never recompute this literal from code under test:
+    /// it exists to detect a migration that silently stops accepting hashes
+    /// written by the version currently in production.
+    const COMPAT_PASSWORD: &str = "correct horse battery staple";
+    const COMPAT_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$ZW5jZWxhZGUtY29tcGF0IQ$PvqN4pZjkPyMJhq1JTRQTKBOhG987wgCXlUwiujDZQ0";
+
+    #[test]
+    fn verifies_hash_stored_by_previous_argon2_release() {
+        assert!(verify_password(COMPAT_PASSWORD, COMPAT_HASH));
+    }
+
+    #[test]
+    fn rejects_wrong_password_against_stored_hash() {
+        assert!(!verify_password("correct horse battery stapl", COMPAT_HASH));
+    }
+
+    #[test]
+    fn new_hash_uses_argon2id_default_parameters() {
+        let hash = hash_password(COMPAT_PASSWORD).expect("hashing must succeed");
+        assert!(hash.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"));
+    }
+
+    #[test]
+    fn two_hashes_of_same_password_differ() {
+        let first = hash_password(COMPAT_PASSWORD).expect("hashing must succeed");
+        let second = hash_password(COMPAT_PASSWORD).expect("hashing must succeed");
+        assert_ne!(first, second, "salt must be drawn fresh for every hash");
+    }
+
+    #[test]
+    fn rejects_malformed_hash() {
+        assert!(!verify_password(COMPAT_PASSWORD, "not-a-phc-string"));
+    }
+
+    #[test]
+    fn generate_token_returns_a_64_char_hex_string() {
+        let token = generate_token().expect("getrandom must succeed");
+        assert_eq!(token.len(), 64);
+        assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn managed_by_from_str_rejects_unknown_tag_without_panicking() {
+        let result = managed_by_from_str("bogus");
+        assert!(matches!(result, Err(StoreError::CorruptRecord(_))));
+    }
+
+    #[test]
+    fn domain_key_err_does_not_panic_on_an_ordinary_message() {
+        let err = domain_key_err(&flaps_domain::DomainError::InvalidKey("bad key".into()));
+        assert!(matches!(err, StoreError::CorruptRecord(_)));
     }
 }

@@ -58,7 +58,9 @@ async fn make_app_with_quota(
         max_global,
         max_per_key,
     }));
-    let state = AppState::new(store).with_sse_quota(sse_quota);
+    let state = AppState::new(store)
+        .expect("test RNG must be available")
+        .with_sse_quota(sse_quota);
     let app = build_router(state.clone());
 
     let token = admin_login(&app).await;

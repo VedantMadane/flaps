@@ -78,12 +78,16 @@ pub struct PreAuthBudget {
 
 impl PreAuthBudget {
     /// Builds a budget from the two layer configurations.
-    #[must_use]
-    pub fn new(config: PreAuthBudgetConfig) -> Self {
-        Self {
-            global: RateLimiter::new(config.global),
-            per_client: RateLimiter::new(config.per_client),
-        }
+    ///
+    /// # Errors
+    /// Returns an error if the operating system's randomness source cannot
+    /// be read while building either layer. Fails closed rather than
+    /// falling back to a predictable secret.
+    pub fn new(config: PreAuthBudgetConfig) -> Result<Self, getrandom::Error> {
+        Ok(Self {
+            global: RateLimiter::new(config.global)?,
+            per_client: RateLimiter::new(config.per_client)?,
+        })
     }
 
     /// Consumes one attempt across the global and per-client layers, widest
@@ -165,7 +169,7 @@ mod tests {
 
     #[test]
     fn an_attempt_within_every_layer_is_allowed() {
-        let budget = PreAuthBudget::new(config(10, 10));
+        let budget = PreAuthBudget::new(config(10, 10)).expect("test RNG must be available");
         assert!(budget.consume(address(1)).is_ok());
     }
 
@@ -174,7 +178,7 @@ mod tests {
         // The per-client layer is what a flood from a single address runs
         // into, whatever identity each attempt carries: the budget no longer
         // keys anything on the identity, so rotating usernames buys nothing.
-        let budget = PreAuthBudget::new(config(1_000, 3));
+        let budget = PreAuthBudget::new(config(1_000, 3)).expect("test RNG must be available");
 
         for attempt in 0..3 {
             assert!(
@@ -192,7 +196,7 @@ mod tests {
 
     #[test]
     fn rotating_addresses_are_stopped_by_the_global_layer() {
-        let budget = PreAuthBudget::new(config(3, 1_000));
+        let budget = PreAuthBudget::new(config(3, 1_000)).expect("test RNG must be available");
 
         for attempt in 0..3 {
             assert!(budget.consume(address(attempt)).is_ok());
@@ -209,7 +213,7 @@ mod tests {
         // When both layers are exhausted at once, the widest one answers. A
         // constant order is what keeps the cheap refusal ahead of the per-key
         // work, and what makes the outcome reproducible.
-        let budget = PreAuthBudget::new(config(1, 1));
+        let budget = PreAuthBudget::new(config(1, 1)).expect("test RNG must be available");
 
         assert!(budget.consume(address(1)).is_ok());
         assert_eq!(
@@ -220,7 +224,7 @@ mod tests {
 
     #[test]
     fn unknown_addresses_share_one_budget_rather_than_escaping_it() {
-        let budget = PreAuthBudget::new(config(1_000, 2));
+        let budget = PreAuthBudget::new(config(1_000, 2)).expect("test RNG must be available");
 
         assert!(budget.consume(ClientAddress::Unknown).is_ok());
         assert!(budget.consume(ClientAddress::Unknown).is_ok());
@@ -233,7 +237,7 @@ mod tests {
 
     #[test]
     fn sdk_admits_is_ok_within_budget_and_err_once_the_client_layer_is_drained() {
-        let budget = PreAuthBudget::new(config(1_000, 3));
+        let budget = PreAuthBudget::new(config(1_000, 3)).expect("test RNG must be available");
 
         assert!(budget.sdk_admits(address(1)).is_ok());
 
@@ -253,7 +257,7 @@ mod tests {
 
     #[test]
     fn consume_sdk_failure_never_touches_the_global_layer() {
-        let budget = PreAuthBudget::new(config(2, 2));
+        let budget = PreAuthBudget::new(config(2, 2)).expect("test RNG must be available");
 
         // Drain the SDK-failure path (per-client only) from one address.
         for attempt in 0..2 {

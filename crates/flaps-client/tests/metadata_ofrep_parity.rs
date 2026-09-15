@@ -166,7 +166,7 @@ async fn spawn_server_with_metadata() -> SocketAddr {
     let project_key = ProjectKey::new(PROJECT).expect("valid project key");
     let env_key = EnvironmentKey::new(ENVIRONMENT).expect("valid environment key");
 
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
     flaps_server::recompile::recompile_environment(&state, &project_key, &env_key)
         .await
         .expect("initial compile");

@@ -79,7 +79,7 @@ async fn make_app_with_ruleset(doc: &str) -> (axum::Router, AppState<SqliteStore
         .await
         .expect("bootstrap");
 
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
     let app = build_router(state.clone());
 
     let token = admin_login(&app).await;
@@ -108,7 +108,7 @@ async fn make_app_empty_cache() -> (axum::Router, String) {
         .await
         .expect("bootstrap");
 
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
     let app = build_router(state.clone());
 
     let token = admin_login(&app).await;
@@ -130,7 +130,7 @@ async fn make_app_with_client_key() -> (axum::Router, AppState<SqliteStore>, Str
         .await
         .expect("bootstrap");
 
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
     let app = build_router(state.clone());
 
     let token = admin_login(&app).await;
@@ -155,20 +155,24 @@ async fn make_app_rate_limited() -> (axum::Router, String) {
         .await
         .expect("bootstrap");
 
-    let rate_limiter = Arc::new(RateLimiter::new(RateLimitConfig {
-        enabled: true,
-        capacity: 0,
-        refill_per_second: 0.0,
-    }));
+    let rate_limiter = Arc::new(
+        RateLimiter::new(RateLimitConfig {
+            enabled: true,
+            capacity: 0,
+            refill_per_second: 0.0,
+        })
+        .expect("test RNG must be available"),
+    );
     // Login is unrelated to this SDK rate limit scenario: keep it disabled so
     // the admin login performed by the test setup below is never throttled.
-    let login_rate_limiter = Arc::new(RateLimiter::disabled());
+    let login_rate_limiter = Arc::new(RateLimiter::disabled().expect("test RNG must be available"));
     let state = AppState::with_config(
         store,
         rate_limiter,
         login_rate_limiter,
         std::time::Duration::from_secs(3600),
-    );
+    )
+    .expect("test RNG must be available");
     let app = build_router(state.clone());
 
     let token = admin_login(&app).await;
@@ -457,7 +461,7 @@ async fn events_403_client_key() {
 #[tokio::test]
 async fn notify_exactly_one_event_per_affected_env() {
     let store = make_store().await;
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
 
     let mut rx = state.events.subscribe();
 
@@ -483,7 +487,7 @@ async fn notify_exactly_one_event_per_affected_env() {
 #[tokio::test]
 async fn notify_zero_events_for_unrelated_env() {
     let store = make_store().await;
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
 
     let mut rx = state.events.subscribe();
 
@@ -535,7 +539,7 @@ async fn e2e_subscriber_receives_event_then_resync_returns_new_version() {
         .await
         .expect("bootstrap");
 
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
     let app = build_router(state.clone());
 
     let token = admin_login(&app).await;
