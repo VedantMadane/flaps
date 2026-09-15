@@ -113,10 +113,12 @@ async fn spawn_quota_exhausted_server() -> (SocketAddr, Arc<AtomicUsize>) {
 
     // Compiles the (empty) ruleset so GET /sync/v1/ruleset returns 200,
     // isolating the quota rejection to the SSE endpoint specifically.
-    let state = AppState::new(store).with_sse_quota(Arc::new(SseQuota::new(SseQuotaConfig {
-        max_global: 0,
-        max_per_key: 0,
-    })));
+    let state = AppState::new(store)
+        .expect("test RNG must be available")
+        .with_sse_quota(Arc::new(SseQuota::new(SseQuotaConfig {
+            max_global: 0,
+            max_per_key: 0,
+        })));
     flaps_server::recompile::recompile_environment(&state, &project_key, &env_key)
         .await
         .expect("initial compile");

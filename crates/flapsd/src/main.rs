@@ -85,7 +85,7 @@ pub async fn run(config_path: String) -> Result<()> {
         .await
         .context("connecting to SQLite store")?;
 
-        let state = build_app_state(store, &config);
+        let state = build_app_state(store, &config)?;
         boot(state, config).await
     } else {
         use flaps_store::postgres::PostgresStore;
@@ -103,7 +103,7 @@ pub async fn run(config_path: String) -> Result<()> {
         .await
         .context("connecting to PostgreSQL store")?;
 
-        let state = build_app_state(store, &config);
+        let state = build_app_state(store, &config)?;
         boot(state, config).await
     }
 }
@@ -118,30 +118,42 @@ pub async fn run(config_path: String) -> Result<()> {
 /// storage backends. The login rate limiter is not operator-configurable: it
 /// keeps the documented default (see
 /// [`flaps_server::state::DEFAULT_LOGIN_RATE_LIMIT_CAPACITY`]).
-fn build_app_state<S: Store>(store: S, config: &Config) -> AppState<S> {
+fn build_app_state<S: Store>(store: S, config: &Config) -> Result<AppState<S>> {
     let rate_limit_per_minute = config.effective_rate_limit_per_minute();
-    let rate_limiter = Arc::new(RateLimiter::new(RateLimitConfig {
-        enabled: true,
-        capacity: rate_limit_per_minute,
-        refill_per_second: f64::from(rate_limit_per_minute) / 60.0,
-    }));
-    let login_rate_limiter = Arc::new(RateLimiter::new(RateLimitConfig {
-        enabled: true,
-        capacity: flaps_server::state::DEFAULT_LOGIN_RATE_LIMIT_CAPACITY,
-        refill_per_second: flaps_server::state::DEFAULT_LOGIN_RATE_LIMIT_REFILL_PER_SECOND,
-    }));
+    let rate_limiter = Arc::new(
+        RateLimiter::new(RateLimitConfig {
+            enabled: true,
+            capacity: rate_limit_per_minute,
+            refill_per_second: f64::from(rate_limit_per_minute) / 60.0,
+        })
+        .map_err(|e| anyhow::anyhow!("{e:?}"))
+        .context("building the SDK rate limiter")?,
+    );
+    let login_rate_limiter = Arc::new(
+        RateLimiter::new(RateLimitConfig {
+            enabled: true,
+            capacity: flaps_server::state::DEFAULT_LOGIN_RATE_LIMIT_CAPACITY,
+            refill_per_second: flaps_server::state::DEFAULT_LOGIN_RATE_LIMIT_REFILL_PER_SECOND,
+        })
+        .map_err(|e| anyhow::anyhow!("{e:?}"))
+        .context("building the login rate limiter")?,
+    );
     let sse_quota = Arc::new(SseQuota::new(SseQuotaConfig {
         max_global: config.effective_max_sse_subscriptions_global(),
         max_per_key: config.effective_max_sse_subscriptions_per_key(),
     }));
 
-    AppState::with_config(
+    let state = AppState::with_config(
         store,
         rate_limiter,
         login_rate_limiter,
         config.effective_session_ttl(),
     )
-    .with_sse_quota(sse_quota)
+    .map_err(|e| anyhow::anyhow!("{e:?}"))
+    .context("building application state")?
+    .with_sse_quota(sse_quota);
+
+    Ok(state)
 }
 
 /// Logs the effective, non-secret configuration values at startup.
@@ -300,7 +312,7 @@ mod tests {
         let sdk_key = seed_sdk_key(&store).await;
 
         let config = base_config(Some(2), None);
-        let state = build_app_state(store, &config);
+        let state = build_app_state(store, &config).expect("test RNG must be available");
         let app = build_router(state);
 
         let whoami_request = || {
@@ -341,7 +353,7 @@ mod tests {
         let sdk_key = seed_sdk_key(&store).await;
 
         let config = base_config(None, None);
-        let state = build_app_state(store, &config);
+        let state = build_app_state(store, &config).expect("test RNG must be available");
         let app = build_router(state);
 
         for attempt in 1..=2 {
@@ -373,7 +385,7 @@ mod tests {
 
         let mut config = base_config(None, None);
         config.max_sse_subscriptions_per_key = Some(1);
-        let state = build_app_state(store, &config);
+        let state = build_app_state(store, &config).expect("test RNG must be available");
         let app = build_router(state);
 
         let events_request = || {
@@ -423,7 +435,7 @@ mod tests {
             .expect("bootstrap admin");
 
         let config = base_config(None, Some(2));
-        let state = build_app_state(store, &config);
+        let state = build_app_state(store, &config).expect("test RNG must be available");
         let app = build_router(state);
 
         let login_body = serde_json::json!({"username": "admin", "password": "admin-password"});
@@ -486,7 +498,7 @@ mod tests {
             .await
             .expect("bootstrap admin");
         let config = base_config(None, None);
-        let state = build_app_state(store, &config);
+        let state = build_app_state(store, &config).expect("test RNG must be available");
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await

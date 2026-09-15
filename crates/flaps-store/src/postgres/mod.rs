@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
+use argon2::{Argon2, PasswordHasher, PasswordVerifier, password_hash::phc::PasswordHash};
 use sqlx::{
     Executor, Pool, Postgres, Transaction,
     migrate::{Migration, MigrationType, Migrator},
@@ -39,10 +39,8 @@ use crate::{
 // ---------------------------------------------------------------------------
 
 fn hash_password(password: &str) -> StoreResult<String> {
-    let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
-    let argon2 = Argon2::default();
-    argon2
-        .hash_password(password.as_bytes(), &salt)
+    Argon2::default()
+        .hash_password(password.as_bytes())
         .map(|h| h.to_string())
         .map_err(|e| {
             StoreError::Serialization(
@@ -88,17 +86,26 @@ async fn verify_password_off_runtime(password: &str, hash: &str) -> bool {
 /// time. Branch prediction, CPU caches, and allocator behavior can still leak
 /// a smaller signal. It is not a hard timing guarantee.
 static DUMMY_PASSWORD_HASH: LazyLock<String> =
-    LazyLock::new(|| hash_password(&generate_token()).unwrap_or_default());
+    LazyLock::new(|| hash_password(&generate_token().unwrap_or_default()).unwrap_or_default());
 
-fn generate_token() -> String {
-    use argon2::password_hash::rand_core::RngCore;
+/// Generates a 32-byte URL-safe random token encoded as hex (64 chars).
+///
+/// # Errors
+/// Returns an error if the operating system's randomness source cannot be
+/// read. Fails closed rather than falling back to a predictable token.
+fn generate_token() -> StoreResult<String> {
     let mut bytes = [0u8; 32];
-    argon2::password_hash::rand_core::OsRng.fill_bytes(&mut bytes);
-    bytes.iter().fold(String::with_capacity(64), |mut acc, b| {
+    getrandom::fill(&mut bytes).map_err(|e| {
+        StoreError::Serialization(
+            serde_json::from_str::<serde_json::Value>(&format!("\"getrandom error: {e}\""))
+                .unwrap_err(),
+        )
+    })?;
+    Ok(bytes.iter().fold(String::with_capacity(64), |mut acc, b| {
         use std::fmt::Write as _;
         let _ = write!(acc, "{b:02x}");
         acc
-    })
+    }))
 }
 
 fn secs_to_rfc3339(secs: u64) -> String {
@@ -1337,7 +1344,7 @@ impl AccountRepository for PostgresStore {
 
 impl SessionRepository for PostgresStore {
     async fn create_session(&self, account_id: &str, ttl: Duration) -> StoreResult<NewSession> {
-        let raw_token = generate_token();
+        let raw_token = generate_token()?;
         let token_hash = self.hasher.hash(&raw_token);
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1681,8 +1688,7 @@ mod tests {
     /// it exists to detect a migration that silently stops accepting hashes
     /// written by the version currently in production.
     const COMPAT_PASSWORD: &str = "correct horse battery staple";
-    const COMPAT_HASH: &str =
-        "$argon2id$v=19$m=19456,t=2,p=1$ZW5jZWxhZGUtY29tcGF0IQ$PvqN4pZjkPyMJhq1JTRQTKBOhG987wgCXlUwiujDZQ0";
+    const COMPAT_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$ZW5jZWxhZGUtY29tcGF0IQ$PvqN4pZjkPyMJhq1JTRQTKBOhG987wgCXlUwiujDZQ0";
 
     #[test]
     fn verifies_hash_stored_by_previous_argon2_release() {
@@ -1691,10 +1697,7 @@ mod tests {
 
     #[test]
     fn rejects_wrong_password_against_stored_hash() {
-        assert!(!verify_password(
-            "correct horse battery stapl",
-            COMPAT_HASH
-        ));
+        assert!(!verify_password("correct horse battery stapl", COMPAT_HASH));
     }
 
     #[test]

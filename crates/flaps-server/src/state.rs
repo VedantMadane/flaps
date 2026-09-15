@@ -183,22 +183,26 @@ impl<S: Store> AppState<S> {
     ///
     /// Defaults: SDK rate limiter enabled (60 req/min per key), login rate
     /// limiter enabled (burst 5, ~1 attempt / 10s per username), session TTL 24h.
-    #[must_use]
-    pub fn new(store: S) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error if the operating system's randomness source cannot
+    /// be read while building a rate limiter. Fails closed rather than
+    /// falling back to a predictable secret.
+    pub fn new(store: S) -> Result<Self, crate::error::ApiError> {
         let (events, _) = broadcast::channel(EVENTS_CHANNEL_CAPACITY);
-        Self {
+        Ok(Self {
             store,
             cache: Arc::new(RwLock::new(HashMap::new())),
             rate_limiter: Arc::new(RateLimiter::new(crate::rate_limit::RateLimitConfig {
                 enabled: true,
                 capacity: DEFAULT_RATE_LIMIT_PER_MINUTE,
                 refill_per_second: f64::from(DEFAULT_RATE_LIMIT_PER_MINUTE) / 60.0,
-            })),
+            })?),
             login_rate_limiter: Arc::new(RateLimiter::new(crate::rate_limit::RateLimitConfig {
                 enabled: true,
                 capacity: DEFAULT_LOGIN_RATE_LIMIT_CAPACITY,
                 refill_per_second: DEFAULT_LOGIN_RATE_LIMIT_REFILL_PER_SECOND,
-            })),
+            })?),
             preauth_budget: Arc::new(PreAuthBudget::new(PreAuthBudgetConfig {
                 global: RateLimitConfig {
                     enabled: true,
@@ -210,7 +214,7 @@ impl<S: Store> AppState<S> {
                     capacity: DEFAULT_PREAUTH_PER_CLIENT_CAPACITY,
                     refill_per_second: DEFAULT_PREAUTH_PER_CLIENT_REFILL_PER_SECOND,
                 },
-            })),
+            })?),
             password_pool: Arc::new(PasswordVerificationPool::new()),
             session_ttl: DEFAULT_SESSION_TTL,
             events,
@@ -219,7 +223,7 @@ impl<S: Store> AppState<S> {
                 max_per_key: DEFAULT_MAX_SSE_SUBSCRIPTIONS_PER_KEY,
             })),
             mutation_locks: Arc::new(StdMutex::new(HashMap::new())),
-        }
+        })
     }
 
     /// Builds app state with explicit configuration.
@@ -227,15 +231,19 @@ impl<S: Store> AppState<S> {
     /// Used by `flapsd_lib::config::Config` to apply the configured SDK rate
     /// limit and session TTL for both the SQLite and PostgreSQL storage
     /// backends, and by tests that need non-default limiter or TTL values.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error if the operating system's randomness source cannot
+    /// be read while building the pre-auth budget. Fails closed rather than
+    /// falling back to a predictable secret.
     pub fn with_config(
         store: S,
         rate_limiter: Arc<RateLimiter>,
         login_rate_limiter: Arc<RateLimiter>,
         session_ttl: Duration,
-    ) -> Self {
+    ) -> Result<Self, crate::error::ApiError> {
         let (events, _) = broadcast::channel(EVENTS_CHANNEL_CAPACITY);
-        Self {
+        Ok(Self {
             store,
             cache: Arc::new(RwLock::new(HashMap::new())),
             rate_limiter,
@@ -251,7 +259,7 @@ impl<S: Store> AppState<S> {
                     capacity: DEFAULT_PREAUTH_PER_CLIENT_CAPACITY,
                     refill_per_second: DEFAULT_PREAUTH_PER_CLIENT_REFILL_PER_SECOND,
                 },
-            })),
+            })?),
             password_pool: Arc::new(PasswordVerificationPool::new()),
             session_ttl,
             events,
@@ -260,7 +268,7 @@ impl<S: Store> AppState<S> {
                 max_per_key: DEFAULT_MAX_SSE_SUBSCRIPTIONS_PER_KEY,
             })),
             mutation_locks: Arc::new(StdMutex::new(HashMap::new())),
-        }
+        })
     }
 
     /// Overrides the default SSE subscription quota.
@@ -405,7 +413,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn lock_project_serializes_same_project() {
         let store = make_store().await;
-        let state = AppState::new(store);
+        let state = AppState::new(store).expect("test RNG must be available");
         let project = ProjectKey::new("proj").unwrap();
 
         let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
@@ -448,7 +456,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn lock_project_does_not_serialize_distinct_projects() {
         let store = make_store().await;
-        let state = AppState::new(store);
+        let state = AppState::new(store).expect("test RNG must be available");
         let project_a = ProjectKey::new("proj-a").unwrap();
         let project_b = ProjectKey::new("proj-b").unwrap();
 
@@ -468,7 +476,7 @@ mod tests {
     #[tokio::test]
     async fn release_project_lock_if_unused_removes_an_unreferenced_entry() {
         let store = make_store().await;
-        let state = AppState::new(store);
+        let state = AppState::new(store).expect("test RNG must be available");
         let project = ProjectKey::new("ghost-project").unwrap();
 
         let guard = state.lock_project(&project).await;
@@ -498,7 +506,7 @@ mod tests {
     #[tokio::test]
     async fn release_project_lock_if_unused_keeps_an_entry_still_referenced_elsewhere() {
         let store = make_store().await;
-        let state = AppState::new(store);
+        let state = AppState::new(store).expect("test RNG must be available");
         let project = ProjectKey::new("contended-project").unwrap();
 
         let guard = state.lock_project(&project).await;

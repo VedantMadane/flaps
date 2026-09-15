@@ -147,16 +147,19 @@ pub async fn warm_up_cache<S: Store>(state: &AppState<S>) {
 /// The password is printed to stdout **once** during first-boot by
 /// [`bootstrap_admin_once`] and **never** stored in clear text, logged via
 /// tracing, or written to any file.
-fn generate_password() -> String {
-    use argon2::password_hash::rand_core::RngCore as _;
+///
+/// # Errors
+/// Returns an error if the operating system's randomness source cannot be
+/// read. Fails closed rather than falling back to a predictable password.
+fn generate_password() -> Result<String> {
     // 18 bytes -> 36 hex chars -> 144 bits of entropy (> 128-bit requirement).
     let mut bytes = [0u8; 18];
-    argon2::password_hash::rand_core::OsRng.fill_bytes(&mut bytes);
-    bytes.iter().fold(String::with_capacity(36), |mut acc, b| {
+    getrandom::fill(&mut bytes)?;
+    Ok(bytes.iter().fold(String::with_capacity(36), |mut acc, b| {
         use std::fmt::Write as _;
         let _ = write!(acc, "{b:02x}");
         acc
-    })
+    }))
 }
 
 /// Creates the initial admin account on first boot (idempotent).
@@ -175,7 +178,7 @@ fn generate_password() -> String {
 /// # Errors
 /// Returns an error when the store reports a failure other than a username conflict.
 pub async fn bootstrap_admin_once<S: Store>(store: &S, username: &str) -> Result<()> {
-    let password = generate_password();
+    let password = generate_password().context("generating admin password")?;
     match store.create_account("system", username, &password).await {
         Ok(_) => {
             println!("flapsd: created initial admin account");
@@ -259,7 +262,7 @@ mod tests {
             .await
             .unwrap();
 
-        let state = AppState::new(store);
+        let state = AppState::new(store).expect("test RNG must be available");
         // Must not panic, must not return Err.
         warm_up_cache(&state).await;
 
@@ -276,7 +279,7 @@ mod tests {
     #[tokio::test]
     async fn warm_up_cache_does_not_panic_on_empty_store() {
         let store = make_store().await;
-        let state = AppState::new(store);
+        let state = AppState::new(store).expect("test RNG must be available");
         // No projects: warm-up should be a no-op.
         warm_up_cache(&state).await;
         let cache = state.cache.read().await;
@@ -382,7 +385,7 @@ mod tests {
             .await
             .unwrap();
 
-        let state = AppState::new(store);
+        let state = AppState::new(store).expect("test RNG must be available");
 
         // warm_up_cache must not panic and must not propagate the error.
         warm_up_cache(&state).await;
@@ -439,7 +442,7 @@ mod tests {
         // bootstrap path: the password stored on first-boot must satisfy the
         // length constraint. Since we cannot recover it from the store, we
         // call the private function via a dedicated test accessor.
-        let pwd = super::generate_password();
+        let pwd = super::generate_password().expect("test RNG must be available");
         assert!(
             pwd.len() >= 24,
             "password length {} is below 24-char minimum",
@@ -449,7 +452,7 @@ mod tests {
 
     #[test]
     fn generated_password_is_url_safe() {
-        let pwd = super::generate_password();
+        let pwd = super::generate_password().expect("test RNG must be available");
         assert!(
             pwd.chars().all(|c| c.is_ascii_alphanumeric()),
             "password must be URL-safe (hex); got {pwd}"
@@ -458,8 +461,8 @@ mod tests {
 
     #[test]
     fn two_generated_passwords_differ() {
-        let first = super::generate_password();
-        let second = super::generate_password();
+        let first = super::generate_password().expect("test RNG must be available");
+        let second = super::generate_password().expect("test RNG must be available");
         assert_ne!(first, second, "salt must be drawn fresh for every password");
     }
 
@@ -625,7 +628,7 @@ mod tests {
             .unwrap();
 
         // Warm up and bootstrap.
-        let state = AppState::new(store);
+        let state = AppState::new(store).expect("test RNG must be available");
         warm_up_cache(&state).await;
         bootstrap_admin_once(&state.store, "admin").await.unwrap();
 

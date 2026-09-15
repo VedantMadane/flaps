@@ -118,7 +118,7 @@ async fn make_app_with_ruleset(document: &str) -> (axum::Router, String) {
         .await
         .expect("bootstrap");
 
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
     let app = build_router(state.clone());
 
     // Login as admin.
@@ -143,7 +143,7 @@ async fn make_app_empty_cache() -> (axum::Router, String) {
     flaps_server::bootstrap_admin(&store, "admin", "admin-pass")
         .await
         .expect("bootstrap");
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
     let app = build_router(state.clone());
 
     let token = admin_login(&app).await;
@@ -161,22 +161,26 @@ async fn make_app_rate_limited() -> (axum::Router, String) {
         .await
         .expect("bootstrap");
 
-    let rate_limiter = Arc::new(flaps_server::rate_limit::RateLimiter::new(
-        flaps_server::rate_limit::RateLimitConfig {
+    let rate_limiter = Arc::new(
+        flaps_server::rate_limit::RateLimiter::new(flaps_server::rate_limit::RateLimitConfig {
             enabled: true,
             capacity: 0,
             refill_per_second: 0.0,
-        },
-    ));
+        })
+        .expect("test RNG must be available"),
+    );
     // Login is unrelated to this SDK rate limit scenario: keep it disabled so
     // the admin login performed by the test setup below is never throttled.
-    let login_rate_limiter = Arc::new(flaps_server::rate_limit::RateLimiter::disabled());
+    let login_rate_limiter = Arc::new(
+        flaps_server::rate_limit::RateLimiter::disabled().expect("test RNG must be available"),
+    );
     let state = AppState::with_config(
         store,
         rate_limiter,
         login_rate_limiter,
         std::time::Duration::from_secs(3600),
-    );
+    )
+    .expect("test RNG must be available");
     let app = build_router(state.clone());
 
     let token = admin_login(&app).await;
@@ -721,7 +725,7 @@ async fn bulk_atomicity_concurrent_cache_swap() {
     flaps_server::bootstrap_admin(&store, "admin", "admin-pass")
         .await
         .expect("bootstrap");
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
     let app = Arc::new(build_router(state.clone()));
 
     let token = admin_login(app.as_ref()).await;
@@ -774,7 +778,7 @@ async fn single_evaluation_merges_flag_and_flag_set_metadata_flag_wins() {
     flaps_server::bootstrap_admin(&store, "admin", "admin-pass")
         .await
         .expect("bootstrap");
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
     let app = build_router(state.clone());
 
     let token = admin_login(&app).await;
@@ -822,7 +826,7 @@ async fn bulk_evaluation_merges_flag_and_flag_set_metadata_flag_wins() {
     flaps_server::bootstrap_admin(&store, "admin", "admin-pass")
         .await
         .expect("bootstrap");
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
     let app = build_router(state.clone());
 
     let token = admin_login(&app).await;

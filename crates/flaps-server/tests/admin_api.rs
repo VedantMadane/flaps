@@ -48,7 +48,7 @@ async fn make_authed_app() -> (axum::Router, String) {
     bootstrap_admin(&store, ADMIN_USER, ADMIN_PASS)
         .await
         .expect("bootstrap admin");
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
     let app = build_router(state);
 
     // Login to get a session token.
@@ -557,7 +557,7 @@ async fn valid_mutation_persists_and_audits() {
     bootstrap_admin(&store, ADMIN_USER, ADMIN_PASS)
         .await
         .unwrap();
-    let state = AppState::new(store.clone());
+    let state = AppState::new(store.clone()).expect("test RNG must be available");
     let app = build_router(state);
 
     // Login
@@ -642,7 +642,7 @@ async fn mutation_refreshes_compiled_cache() {
     bootstrap_admin(&store, ADMIN_USER, ADMIN_PASS)
         .await
         .unwrap();
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
     let cache = state.cache.clone();
     let app = build_router(state);
 
@@ -744,7 +744,7 @@ async fn segment_change_recompiles_referencing_envs() {
     bootstrap_admin(&store, ADMIN_USER, ADMIN_PASS)
         .await
         .unwrap();
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
     let cache = state.cache.clone();
     let app = build_router(state);
 
@@ -998,7 +998,7 @@ async fn login_fails_with_wrong_password() {
     bootstrap_admin(&store, ADMIN_USER, ADMIN_PASS)
         .await
         .unwrap();
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
     let app = build_router(state);
 
     let login_body = serde_json::json!({
@@ -1142,7 +1142,7 @@ async fn whoami_with_valid_sdk_key() {
     bootstrap_admin(&store, ADMIN_USER, ADMIN_PASS)
         .await
         .unwrap();
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
     let app = build_router(state);
 
     // Login as admin.
@@ -1269,7 +1269,7 @@ async fn login_is_rate_limited_after_repeated_failures() {
         .await
         .unwrap();
     // Default AppState::new: login burst capacity is 5 (see state.rs).
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
     let app = build_router(state);
 
     // The rate limiter is keyed by username and checked before credentials
@@ -1310,18 +1310,22 @@ async fn login_rate_limiter_disabled_never_throttles() {
     bootstrap_admin(&store, ADMIN_USER, ADMIN_PASS)
         .await
         .unwrap();
-    let rate_limiter = Arc::new(RateLimiter::new(RateLimitConfig {
-        enabled: true,
-        capacity: 60,
-        refill_per_second: 1.0,
-    }));
-    let login_rate_limiter = Arc::new(RateLimiter::disabled());
+    let rate_limiter = Arc::new(
+        RateLimiter::new(RateLimitConfig {
+            enabled: true,
+            capacity: 60,
+            refill_per_second: 1.0,
+        })
+        .expect("test RNG must be available"),
+    );
+    let login_rate_limiter = Arc::new(RateLimiter::disabled().expect("test RNG must be available"));
     let mut state = AppState::with_config(
         store,
         rate_limiter,
         login_rate_limiter,
         std::time::Duration::from_secs(3600),
-    );
+    )
+    .expect("test RNG must be available");
     // `with_config` always wires an enabled pre-authentication budget (see
     // issues #133 and #134), independent of the login rate limiter above.
     // This test targets the login rate limiter in isolation, so the budget's
@@ -1332,10 +1336,13 @@ async fn login_rate_limiter_disabled_never_throttles() {
         capacity: u32::MAX,
         refill_per_second: f64::MAX / 2.0,
     };
-    state.preauth_budget = Arc::new(PreAuthBudget::new(PreAuthBudgetConfig {
-        global: disabled_layer,
-        per_client: disabled_layer,
-    }));
+    state.preauth_budget = Arc::new(
+        PreAuthBudget::new(PreAuthBudgetConfig {
+            global: disabled_layer,
+            per_client: disabled_layer,
+        })
+        .expect("test RNG must be available"),
+    );
     let app = build_router(state);
 
     for attempt in 1..=10 {

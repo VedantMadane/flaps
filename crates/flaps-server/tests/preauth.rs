@@ -23,7 +23,7 @@ async fn make_app() -> axum::Router {
     bootstrap_admin(&store, ADMIN_USER, ADMIN_PASS)
         .await
         .expect("bootstrap admin");
-    build_router(AppState::new(store))
+    build_router(AppState::new(store).expect("test RNG must be available"))
 }
 
 fn login_request(username: &str, password: &str) -> Request<Body> {
@@ -273,7 +273,7 @@ async fn a_login_burst_does_not_starve_unrelated_requests() {
 async fn impossible_sdk_keys_never_reach_the_database() {
     let hasher = KeyHasher::new(b"00000000000000000000000000000000".to_vec());
     let store = SqliteStore::in_memory(hasher).await.expect("store");
-    let app = build_router(AppState::new(store.clone()));
+    let app = build_router(AppState::new(store.clone()).expect("test RNG must be available"));
 
     let before = store.sdk_key_lookups();
 
@@ -459,7 +459,7 @@ async fn a_flood_of_wellformed_but_absent_keys_stops_hitting_the_database() {
     bootstrap_admin(&store, ADMIN_USER, ADMIN_PASS)
         .await
         .expect("bootstrap admin");
-    let app = build_router(AppState::new(store.clone()));
+    let app = build_router(AppState::new(store.clone()).expect("test RNG must be available"));
 
     let before = store.sdk_key_lookups();
 

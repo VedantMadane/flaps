@@ -74,10 +74,12 @@ async fn spawn_quota_exhausted_server() -> ServerHandle {
 
     // The permanently-exhausted SSE quota is the crux of the test: every
     // subscription attempt, from any key, is rejected with 429.
-    let state = AppState::new(store).with_sse_quota(Arc::new(SseQuota::new(SseQuotaConfig {
-        max_global: 0,
-        max_per_key: 0,
-    })));
+    let state = AppState::new(store)
+        .expect("test RNG must be available")
+        .with_sse_quota(Arc::new(SseQuota::new(SseQuotaConfig {
+            max_global: 0,
+            max_per_key: 0,
+        })));
 
     // The default pre-authentication budget is used here (see issue #134
     // Option A): a valid SDK key never consumes it, since it is only spent on

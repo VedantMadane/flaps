@@ -70,7 +70,7 @@ async fn spawn_real_server() -> ServerHandle {
 
     seed_active_boolean_flag(&store, &project_key, &env_key, &flag_key, &vk_on, &vk_off).await;
 
-    let state = AppState::new(store);
+    let state = AppState::new(store).expect("test RNG must be available");
 
     // Compiles the seeded environment and installs it into the cache, exactly
     // as `flapsd`'s startup warm-up does for every (project, environment)

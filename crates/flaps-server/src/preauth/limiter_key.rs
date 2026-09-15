@@ -40,13 +40,16 @@ impl LimiterKeyDeriver {
     ///
     /// The secret never leaves the process and is never persisted: it only
     /// has to be unpredictable to whoever is sending requests right now.
-    #[must_use]
-    pub fn new() -> Self {
-        use argon2::password_hash::rand_core::{OsRng, RngCore as _};
-
+    ///
+    /// # Errors
+    /// Returns an error if the operating system's randomness source cannot
+    /// be read. Fails closed rather than falling back to a predictable
+    /// secret.
+    pub fn new() -> Result<Self, crate::error::ApiError> {
         let mut secret = [0u8; SECRET_BYTES];
-        OsRng.fill_bytes(&mut secret);
-        Self { secret }
+        getrandom::fill(&mut secret)
+            .map_err(|e| crate::error::ApiError::Internal(e.to_string()))?;
+        Ok(Self { secret })
     }
 
     /// Derives the fixed-size key for an arbitrary identifier.
@@ -64,25 +67,19 @@ impl LimiterKeyDeriver {
     }
 }
 
-impl Default for LimiterKeyDeriver {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn the_same_identifier_derives_the_same_key() {
-        let deriver = LimiterKeyDeriver::new();
+        let deriver = LimiterKeyDeriver::new().expect("test RNG must be available");
         assert_eq!(deriver.derive("alice"), deriver.derive("alice"));
     }
 
     #[test]
     fn distinct_identifiers_derive_distinct_keys() {
-        let deriver = LimiterKeyDeriver::new();
+        let deriver = LimiterKeyDeriver::new().expect("test RNG must be available");
         assert_ne!(deriver.derive("alice"), deriver.derive("bob"));
     }
 
@@ -90,14 +87,14 @@ mod tests {
     fn two_derivers_disagree_on_the_same_identifier() {
         // The per-process secret is what prevents an attacker from computing,
         // ahead of time, an input that lands in a target account's bucket.
-        let first = LimiterKeyDeriver::new();
-        let second = LimiterKeyDeriver::new();
+        let first = LimiterKeyDeriver::new().expect("test RNG must be available");
+        let second = LimiterKeyDeriver::new().expect("test RNG must be available");
         assert_ne!(first.derive("alice"), second.derive("alice"));
     }
 
     #[test]
     fn key_size_is_independent_of_identifier_length() {
-        let deriver = LimiterKeyDeriver::new();
+        let deriver = LimiterKeyDeriver::new().expect("test RNG must be available");
         let short = deriver.derive("a");
         let long = deriver.derive(&"a".repeat(4096));
         assert_eq!(
@@ -109,7 +106,7 @@ mod tests {
 
     #[test]
     fn the_debug_rendering_never_exposes_the_identifier() {
-        let deriver = LimiterKeyDeriver::new();
+        let deriver = LimiterKeyDeriver::new().expect("test RNG must be available");
         let rendered = format!("{:?}", deriver.derive("secret-account-name"));
         assert!(
             !rendered.contains("secret-account-name"),
