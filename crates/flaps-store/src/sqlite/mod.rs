@@ -43,12 +43,7 @@ fn hash_password(password: &str) -> StoreResult<String> {
     Argon2::default()
         .hash_password(password.as_bytes())
         .map(|h| h.to_string())
-        .map_err(|e| {
-            StoreError::Serialization(
-                serde_json::from_str::<serde_json::Value>(&format!("\"argon2 error: {e}\""))
-                    .unwrap_err(),
-            )
-        })
+        .map_err(|e| crate::error::crypto_error("hashing password", e))
 }
 
 fn verify_password(password: &str, hash: &str) -> bool {
@@ -96,12 +91,7 @@ static DUMMY_PASSWORD_HASH: LazyLock<String> =
 /// read. Fails closed rather than falling back to a predictable token.
 fn generate_token() -> StoreResult<String> {
     let mut bytes = [0u8; 32];
-    getrandom::fill(&mut bytes).map_err(|e| {
-        StoreError::Serialization(
-            serde_json::from_str::<serde_json::Value>(&format!("\"getrandom error: {e}\""))
-                .unwrap_err(),
-        )
-    })?;
+    getrandom::fill(&mut bytes).map_err(|e| crate::error::crypto_error("generating token", e))?;
     Ok(bytes.iter().fold(String::with_capacity(64), |mut acc, b| {
         use std::fmt::Write as _;
         let _ = write!(acc, "{b:02x}");
@@ -1718,7 +1708,11 @@ impl WriteSession for SqliteWriteSession<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SqliteStore, hash_password, verify_password};
+    use super::{
+        SqliteStore, domain_key_err, generate_token, hash_password, managed_by_from_str,
+        verify_password,
+    };
+    use crate::error::StoreError;
     use crate::hash::KeyHasher;
 
     /// Password and PHC hash fixed by the argon2-0-6 migration compatibility
@@ -1756,6 +1750,25 @@ mod tests {
     #[test]
     fn rejects_malformed_hash() {
         assert!(!verify_password(COMPAT_PASSWORD, "not-a-phc-string"));
+    }
+
+    #[test]
+    fn generate_token_returns_a_64_char_hex_string() {
+        let token = generate_token().expect("getrandom must succeed");
+        assert_eq!(token.len(), 64);
+        assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn managed_by_from_str_rejects_unknown_tag_without_panicking() {
+        let result = managed_by_from_str("bogus");
+        assert!(matches!(result, Err(StoreError::CorruptRecord(_))));
+    }
+
+    #[test]
+    fn domain_key_err_does_not_panic_on_an_ordinary_message() {
+        let err = domain_key_err(&flaps_domain::DomainError::InvalidKey("bad key".into()));
+        assert!(matches!(err, StoreError::CorruptRecord(_)));
     }
 
     /// Issue #98 regression: `SqliteStore::connect` must create the database
