@@ -164,3 +164,41 @@ fn generate_sdk_key(kind: SdkKeyKind) -> String {
     });
     format!("{prefix}_{hex}")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::generate_sdk_key;
+    use flaps_domain::SdkKeyKind;
+
+    #[test]
+    fn generated_server_key_has_expected_prefix_and_length() {
+        let key = generate_sdk_key(SdkKeyKind::Server);
+        assert!(key.starts_with("sv_"), "got {key}");
+        // "sv_" (3) + 24 bytes as hex (48) = 51 characters.
+        assert_eq!(key.len(), 51, "unexpected key length: {key}");
+    }
+
+    #[test]
+    fn generated_client_key_has_expected_prefix_and_length() {
+        let key = generate_sdk_key(SdkKeyKind::Client);
+        assert!(key.starts_with("cl_"), "got {key}");
+        assert_eq!(key.len(), 51, "unexpected key length: {key}");
+    }
+
+    #[test]
+    fn generated_key_suffix_is_lowercase_hex() {
+        let key = generate_sdk_key(SdkKeyKind::Server);
+        let suffix = key.strip_prefix("sv_").expect("server prefix");
+        assert!(
+            suffix.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "suffix must be lowercase hex; got {suffix}"
+        );
+    }
+
+    #[test]
+    fn two_generated_keys_differ() {
+        let first = generate_sdk_key(SdkKeyKind::Server);
+        let second = generate_sdk_key(SdkKeyKind::Server);
+        assert_ne!(first, second, "salt must be drawn fresh for every key");
+    }
+}

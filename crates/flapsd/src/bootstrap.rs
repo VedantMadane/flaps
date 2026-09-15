@@ -456,6 +456,13 @@ mod tests {
         );
     }
 
+    #[test]
+    fn two_generated_passwords_differ() {
+        let first = super::generate_password();
+        let second = super::generate_password();
+        assert_ne!(first, second, "salt must be drawn fresh for every password");
+    }
+
     // -- connect_store_with_retry --
 
     #[tokio::test]
