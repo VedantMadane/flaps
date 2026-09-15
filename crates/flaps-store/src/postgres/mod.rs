@@ -139,17 +139,14 @@ fn managed_by_from_str(s: &str) -> StoreResult<ManagedBy> {
     match s {
         "local" => Ok(ManagedBy::Local),
         "federated" => Ok(ManagedBy::Federated),
-        other => Err(StoreError::Serialization(
-            serde_json::from_str::<serde_json::Value>(&format!("\"unknown managed_by: {other}\""))
-                .unwrap_err(),
-        )),
+        other => Err(StoreError::CorruptRecord(format!(
+            "unknown managed_by: {other}"
+        ))),
     }
 }
 
 fn domain_key_err(e: &flaps_domain::DomainError) -> StoreError {
-    StoreError::Serialization(
-        serde_json::from_str::<serde_json::Value>(&format!("\"{e}\"")).unwrap_err(),
-    )
+    StoreError::CorruptRecord(e.to_string())
 }
 
 fn row_to_project(

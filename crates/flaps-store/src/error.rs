@@ -44,10 +44,7 @@ pub type StoreResult<T> = Result<T, StoreError>;
 /// directly in tests: the operating system's randomness source cannot be
 /// forced to fail on demand.
 pub(crate) fn crypto_error(context: &str, error: impl std::fmt::Display) -> StoreError {
-    StoreError::Serialization(
-        serde_json::from_str::<serde_json::Value>(&format!("\"{context}: {error}\""))
-            .unwrap_err(),
-    )
+    StoreError::Crypto(format!("{context}: {error}"))
 }
 
 #[cfg(test)]
